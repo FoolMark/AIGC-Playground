@@ -1,0 +1,4 @@
+./__pycache__
+CIFAR10/cifar-10-batches-py
+*.jpg
+*.pt
