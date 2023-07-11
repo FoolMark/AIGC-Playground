@@ -1,7 +1,12 @@
-## Intro
-An AIGC playground, aiming at reproducing interesting generative model with pyTorch.
-## Branch Info
-### Data
-- A collection of frequently used datasets for generation.
-### PixelCNN
-- Implementation of [PixelRNN](https://arxiv.org/abs/1601.06759)
+# Intro
+- Implementation of [PixelCNN](https://arxiv.org/abs/1601.06759)
+
+# Run
+```
+python utils.py  # download MNIST
+python train.py  # train model, set more details in config.py
+python test.py # generate
+```
+
+# Sample
+![Alt Text](toy_sample/demo_generate.jpg)
