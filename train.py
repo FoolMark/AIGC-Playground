@@ -53,21 +53,22 @@ for epoch in range(n_epoch):
     net.eval()
     test_loss = 0.0
     test_count = 0
-    for data,label in test_loader:
-        data = data.cuda()
-        if binary_flag:
-            input = binarize(data)
-        else:
-            input = data
-        output = net(input)
-        if binary_flag:
-            target = binarize(data).detach()
-        else:
-            target = quantize(data).detach()
-            target = target.squeeze(1).long()
-        loss = loss_func(output,target)
-        test_loss += loss.item()
-        test_count += 1
+    with torch.no_grad():
+        for data,label in test_loader:
+            data = data.cuda()
+            if binary_flag:
+                input = binarize(data)
+            else:
+                input = data
+            output = net(input)
+            if binary_flag:
+                target = binarize(data).detach()
+            else:
+                target = quantize(data).detach()
+                target = target.squeeze(1).long()
+            loss = loss_func(output,target)
+            test_loss += loss.item()
+            test_count += 1
     test_loss /= test_count
     logger.info(f'[Test] Epoch {epoch+1}/{n_epoch}, Loss: {test_loss}')
     print(f'[Test] Epoch {epoch+1}/{n_epoch}, Loss: {test_loss}')
