@@ -1,89 +1,119 @@
 """
-Implementation of PixelCNN
+Implementation of Gated PixelCNN
 
-Reference: https://arxiv.org/pdf/1601.06759.pdf
+Reference: https://arxiv.org/pdf/1606.05328.pdf
 
 Only grayscale input (MNIST) supported
+
+Inspired by the follow github repo
+https://github.com/anordertoreclaim/PixelCNN/tree/master
 
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pdb
+
+#Vertical Conv
+class VConv(nn.Conv2d):
+    def __init__(self,*args, **kargs):
+        super(VConv, self).__init__(*args, **kargs)
+        self.H,_ = self.kernel_size
 
 
-class MaskConv2d(nn.Conv2d):
-    def __init__(self, mask='B',*args, **kargs):
-        super(MaskConv2d, self).__init__(*args, **kargs)
+    def forward(self, x):
+        x = super(VConv, self).forward(x)
+
+        v = x[:,:,1:-self.H,:]
+        shift_v = x[:,:,:-self.H,:]
+
+        return v,shift_v
+
+
+#Horizontal Conv
+class HConv(nn.Conv2d):
+    def __init__(self,*args,mask, **kargs):
+        super(HConv, self).__init__(*args, **kargs)
         assert mask in {'A', 'B'}
+
         self.mask_type = mask
         self.register_buffer('mask', self.weight.data.clone())
         self.mask.fill_(1)
-    
-        _, _, H, W = self.mask.size()
-    
-        self.mask[:, :, H//2,W//2 + (self.mask_type == 'B'):] = 0
-        self.mask[:, :, H//2+1:, :] = 0
-    
+
+        _, _,_, W = self.mask.size()
+        self.mask[:, :,:, W//2 + (self.mask_type == 'B'):] = 0
+
     def forward(self, x):
         self.weight.data *= self.mask
-        return super(MaskConv2d, self).forward(x)
-    
+        return super(HConv, self).forward(x)
 
-class ResBlock(nn.Module):
-    def __init__(self,h_dim):
-        super(ResBlock,self).__init__()
-        assert h_dim % 2 == 0
+class GatedBlock(nn.Module):
+    def __init__(self,in_dim,h_dim,first,k_size=3):
+        super(GatedBlock).__init__()
+        self.first = first
+        self.in_dim = in_dim
         self.h_dim = h_dim
-        self.conv1 = nn.Sequential(
-            nn.PReLU(),
-            nn.Conv2d(h_dim,h_dim//2,1,1,0,bias=False),
-            nn.BatchNorm2d(h_dim//2),
-        )
-        self.conv2 = nn.Sequential(
-            nn.PReLU(),
-            MaskConv2d('B',h_dim//2,h_dim//2,3,1,1,bias=False),
-            nn.BatchNorm2d(h_dim//2),
-        )
-        self.conv3 = nn.Sequential(
-            nn.PReLU(),
-            nn.Conv2d(h_dim//2,h_dim,1,1,0,bias=False),
-            nn.BatchNorm2d(h_dim),
-        )
 
+        # the first gated block is special, so as to establish casuality
+        if first == True:
+            self.v_conv = VConv(in_dim,2*h_dim,(4,7),1,(4,3))
+            self.h_conv = HConv(in_dim,2*h_dim,(1,7),1,3,mask='A')
+        else:
+            self.v_conv = VConv(in_dim,2*h_dim,(k_size//2+1,k_size),1,(2,1))
+            self.h_conv = HConv(in_dim,2*h_dim,(1,k_size),1,1,mask='B')
+            self.h_skip = nn.Conv2d(h_dim,h_dim,1) 
+        
+        self.v2h = nn.Conv2d(2*h_dim,2*h_dim,1)
+        self.h_fc = nn.Conv2d(h_dim,h_dim,1)
+
+        self.tanh = nn.Tanh()
+        self.sigmoid = nn.Sigmoid()
+    
     def forward(self,x):
-        identity = x
-        res = self.conv1(x)
-        res = self.conv2(res)
-        res = self.conv3(res)
-        outp = res + identity
-        return outp
+        v_in,h_in,skip = x[0],x[1],x[2]
+        #vertical
+        v_out,v_out_shift = self.v_conv(v_in)
+        v_out1,v_out2 = torch.split(v_out,self.h_dim,dim=1)
+        v_out = self.tanh(v_out1)*self.sigmoid(v_out2)
+
+        #horizontal
+        h_out = self.h_conv(h_in)
+        v_out_shift = self.v2h(v_out_shift)
+        h_out = h_out + v_out_shift
+        h_out1,h_out2 = torch.split(h_out,self.h_dim,dim=1)
+        h_out = self.tanh(h_out1)*self.sigmoid(h_out2)
+        h_out = self.h_fc(h_out)
+        h_out = h_out + h_in
+
+        if skip:
+            skip = skip + self.h_skip(h_out)
+
+        return {0:v_out,1:h_out,2:skip}
 
 class PixelCNN(nn.Module):
-    def __init__(self, num_layer,h_dim,binary_flag=True, *args, **kargs):
+    def __init__(self,num_layer,h_dim,k_size,*args, **kargs):
         super(PixelCNN, self).__init__(*args, **kargs)
-        self.binary_flag = binary_flag
+        self.casual = GatedBlock(1,h_dim,True)
         self.layers = []
-        for i in range(num_layer+1):
-            if i == 0:
-                self.layers.append(nn.Sequential(MaskConv2d('A',1,h_dim,7,1,3,bias=False),
-                    nn.BatchNorm2d(h_dim)
-                    ))
-            else:
-                self.layers.append(ResBlock(h_dim))
-        self.layers.append(nn.Sequential(nn.PReLU(),
+        for i in range(num_layer):
+            self.layers.append(GatedBlock(h_dim,h_dim,False,k_size))
+        self.gateConv = nn.Sequential(*self.layers)
+        self.outConv = nn.Sequential(nn.PReLU(),
             nn.Conv2d(h_dim,h_dim,1,1,0,bias=False),
             nn.BatchNorm2d(h_dim),
-            nn.PReLU(),
-        ))
-        self.backbone = nn.Sequential(*self.layers)
-        if binary_flag:
-            self.last_conv = nn.Conv2d(h_dim,1,1,1,0)
-            self.prob = nn.Sigmoid()
-        else:
-           self.last_conv = nn.Conv2d(h_dim,256,1,1,0)
+            nn.PReLU())
+        self.lastConv = nn.Conv2d(h_dim,256,1,1,0)
+
     def forward(self,x):
-        x = self.backbone(x)
-        x = self.last_conv(x)
-        if self.binary_flag:
-            x = self.prob(x)
+        v,h,_ = self.casual({0:x,1:x,2:None})
+        blank = torch.zeros(x.shape,requires_grad=True)
+        _,_,skip = self.gateConv({0:v,1:h,2:blank})
+        x = self.outConv(skip)
+        x = self.lastConv(x)
+
         return x
+
+
+
+if __name__ == '__main__':
+    pass
