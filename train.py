@@ -13,15 +13,13 @@ test_loader = testLoader(bs=batch_size)
 
 
 
-net = PixelCNN(n_layer,h_dim,binary_flag=binary_flag).cuda()
+net = PixelCNN(n_layer,h_dim,k_size).cuda()
 if opt_type == 'sgd':
     opt = optim.SGD(lr=base_lr,weight_decay=weight_decay,params=net.parameters())
 else:
     opt = optim.AdamW(lr=base_lr,weight_decay=weight_decay,params=net.parameters())
-if binary_flag:
-    loss_func = nn.BCELoss()
-else:
-    loss_func = nn.CrossEntropyLoss()
+
+loss_func = nn.CrossEntropyLoss()
 
 iter = 0
 for epoch in range(n_epoch):
@@ -31,16 +29,11 @@ for epoch in range(n_epoch):
     for data,label in train_loader:
         iter += 1
         data = data.cuda()
-        if binary_flag:
-            input = binarize(data)
-        else:
-            input = data
+        input = data
         output = net(input)
-        if binary_flag:
-            target = binarize(data).detach()
-        else:
-            target = quantize(data).detach()
-            target = target.squeeze(1).long()
+
+        target = quantize(data).detach()
+        target = target.squeeze(1).long()
 
         loss = loss_func(output,target)
         opt.zero_grad()
@@ -56,16 +49,12 @@ for epoch in range(n_epoch):
     with torch.no_grad():
         for data,label in test_loader:
             data = data.cuda()
-            if binary_flag:
-                input = binarize(data)
-            else:
-                input = data
+
+            input = data
             output = net(input)
-            if binary_flag:
-                target = binarize(data).detach()
-            else:
-                target = quantize(data).detach()
-                target = target.squeeze(1).long()
+            target = quantize(data).detach()
+            target = target.squeeze(1).long()
+
             loss = loss_func(output,target)
             test_loss += loss.item()
             test_count += 1

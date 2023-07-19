@@ -1,11 +1,11 @@
 #model
-n_layer = 15
-h_dim = 128
+n_layer = 7
+h_dim = 64
+k_size = 5
 
 #training
 batch_size = 100
-n_epoch = 50
+n_epoch = 10
 opt_type = 'adam'
-base_lr = 0.001
+base_lr = 2.0e-4
 weight_decay = 0.01
-binary_flag = False

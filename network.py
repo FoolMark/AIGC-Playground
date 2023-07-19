@@ -20,12 +20,11 @@ class VConv(nn.Conv2d):
         super(VConv, self).__init__(*args, **kargs)
         self.H,_ = self.kernel_size
 
-
     def forward(self, x):
         x = super(VConv, self).forward(x)
 
         v = x[:,:,1:-self.H,:]
-        shift_v = x[:,:,:-self.H,:]
+        shift_v = x[:,:,:-self.H-1,:]
 
         return v,shift_v
 
@@ -47,21 +46,52 @@ class HConv(nn.Conv2d):
         self.weight.data *= self.mask
         return super(HConv, self).forward(x)
 
-class GatedBlock(nn.Module):
-    def __init__(self,in_dim,h_dim,first,k_size=3):
-        super(GatedBlock).__init__()
-        self.first = first
+
+class CasualBlock(nn.Module):
+    def __init__(self,in_dim,h_dim):
+        super(CasualBlock,self).__init__()
         self.in_dim = in_dim
         self.h_dim = h_dim
+        k_size = 7
 
-        # the first gated block is special, so as to establish casuality
-        if first == True:
-            self.v_conv = VConv(in_dim,2*h_dim,(4,7),1,(4,3))
-            self.h_conv = HConv(in_dim,2*h_dim,(1,7),1,3,mask='A')
-        else:
-            self.v_conv = VConv(in_dim,2*h_dim,(k_size//2+1,k_size),1,(2,1))
-            self.h_conv = HConv(in_dim,2*h_dim,(1,k_size),1,1,mask='B')
-            self.h_skip = nn.Conv2d(h_dim,h_dim,1) 
+        self.v_conv = VConv(in_dim,2*h_dim,(k_size//2+1,k_size),1,(k_size//2+1,k_size//2))
+        self.h_conv = HConv(in_dim,2*h_dim,(1,k_size),1,(0,k_size//2),mask='A')
+
+        self.v2h = nn.Conv2d(2*h_dim,2*h_dim,1)
+        self.h_fc = nn.Conv2d(h_dim,h_dim,1)
+
+        self.tanh = nn.Tanh()
+        self.sigmoid = nn.Sigmoid()
+    
+    def forward(self,x):
+        #vertical
+        v_out,v_out_shift = self.v_conv(x)
+        v_out1,v_out2 = torch.split(v_out,self.h_dim,dim=1)
+        v_out = self.tanh(v_out1)*self.sigmoid(v_out2)
+
+        #horizontal
+        h_out = self.h_conv(x)
+        v_out_shift = self.v2h(v_out_shift)
+        h_out = h_out + v_out_shift
+        h_out1,h_out2 = torch.split(h_out,self.h_dim,dim=1)
+        h_out = self.tanh(h_out1)*self.sigmoid(h_out2)
+
+        h_out = self.h_fc(h_out)
+        h_out = h_out + x
+
+        return v_out,h_out
+
+
+class GatedBlock(nn.Module):
+    def __init__(self,in_dim,h_dim,k_size=5):
+        super(GatedBlock,self).__init__()
+        self.in_dim = in_dim
+        self.h_dim = h_dim
+        self.k_size = k_size
+
+        self.v_conv = VConv(in_dim,2*h_dim,(k_size//2+1,k_size),1,(k_size//2+1,k_size//2))
+        self.h_conv = HConv(in_dim,2*h_dim,(1,k_size),1,(0,k_size//2),1,mask='B')
+        self.h_skip = nn.Conv2d(h_dim,h_dim,1) 
         
         self.v2h = nn.Conv2d(2*h_dim,2*h_dim,1)
         self.h_fc = nn.Conv2d(h_dim,h_dim,1)
@@ -71,6 +101,7 @@ class GatedBlock(nn.Module):
     
     def forward(self,x):
         v_in,h_in,skip = x[0],x[1],x[2]
+        
         #vertical
         v_out,v_out_shift = self.v_conv(v_in)
         v_out1,v_out2 = torch.split(v_out,self.h_dim,dim=1)
@@ -82,21 +113,21 @@ class GatedBlock(nn.Module):
         h_out = h_out + v_out_shift
         h_out1,h_out2 = torch.split(h_out,self.h_dim,dim=1)
         h_out = self.tanh(h_out1)*self.sigmoid(h_out2)
+
+        skip = skip + self.h_skip(h_out)
+
         h_out = self.h_fc(h_out)
         h_out = h_out + h_in
 
-        if skip:
-            skip = skip + self.h_skip(h_out)
-
-        return {0:v_out,1:h_out,2:skip}
+        return [v_out,h_out,skip]
 
 class PixelCNN(nn.Module):
     def __init__(self,num_layer,h_dim,k_size,*args, **kargs):
         super(PixelCNN, self).__init__(*args, **kargs)
-        self.casual = GatedBlock(1,h_dim,True)
+        self.casual = CasualBlock(1,h_dim)
         self.layers = []
         for i in range(num_layer):
-            self.layers.append(GatedBlock(h_dim,h_dim,False,k_size))
+            self.layers.append(GatedBlock(h_dim,h_dim,k_size))
         self.gateConv = nn.Sequential(*self.layers)
         self.outConv = nn.Sequential(nn.PReLU(),
             nn.Conv2d(h_dim,h_dim,1,1,0,bias=False),
@@ -105,15 +136,11 @@ class PixelCNN(nn.Module):
         self.lastConv = nn.Conv2d(h_dim,256,1,1,0)
 
     def forward(self,x):
-        v,h,_ = self.casual({0:x,1:x,2:None})
-        blank = torch.zeros(x.shape,requires_grad=True)
-        _,_,skip = self.gateConv({0:v,1:h,2:blank})
+        v,h = self.casual(x)
+        blank = torch.zeros(x.shape,requires_grad=True).cuda()
+        x = [v,h,blank]
+        _,_,skip = self.gateConv(x)
         x = self.outConv(skip)
         x = self.lastConv(x)
-
         return x
 
-
-
-if __name__ == '__main__':
-    pass
