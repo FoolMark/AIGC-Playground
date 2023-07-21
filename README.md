@@ -1,5 +1,5 @@
 # Intro
-- Implementation of [PixelCNN](https://arxiv.org/abs/1601.06759)
+- Implementation of [PixelCNN](https://arxiv.org/pdf/1606.05328.pdf)
 
 # Run
 ```
