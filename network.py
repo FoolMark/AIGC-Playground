@@ -28,7 +28,6 @@ class VConv(nn.Conv2d):
 
         return v,shift_v
 
-
 #Horizontal Conv
 class HConv(nn.Conv2d):
     def __init__(self,*args,mask, **kargs):
@@ -77,7 +76,6 @@ class CasualBlock(nn.Module):
         h_out = self.tanh(h_out1)*self.sigmoid(h_out2)
 
         h_out = self.h_fc(h_out)
-        h_out = h_out + x
 
         return v_out,h_out
 
@@ -122,7 +120,7 @@ class GatedBlock(nn.Module):
         return [v_out,h_out,skip]
 
 class PixelCNN(nn.Module):
-    def __init__(self,num_layer,h_dim,k_size,*args, **kargs):
+    def __init__(self,num_layer,h_dim,k_size,color_bit,*args, **kargs):
         super(PixelCNN, self).__init__(*args, **kargs)
         self.casual = CasualBlock(1,h_dim)
         self.layers = []
@@ -133,7 +131,8 @@ class PixelCNN(nn.Module):
             nn.Conv2d(h_dim,h_dim,1,1,0,bias=False),
             nn.BatchNorm2d(h_dim),
             nn.PReLU())
-        self.lastConv = nn.Conv2d(h_dim,256,1,1,0)
+        
+        self.lastConv = nn.Conv2d(h_dim,2**color_bit,1,1,0)
 
     def forward(self,x):
         v,h = self.casual(x)

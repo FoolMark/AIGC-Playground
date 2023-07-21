@@ -61,16 +61,17 @@ def binarize(x,sample=False):
         y = (x >= 0.5)
         return y.float()
 
-def quantize(x,sample=False):
+def quantize(x,bit=8,sample=False):
+    M = 2**bit - 1
     if sample == False:
-        y = (x * 255).to(torch.uint8)
+        y = (x * M).to(torch.uint8)
         return y
     else:
         x = x.permute(0,2,3,1)
         dist = Categorical(x)
         y = dist.sample()
         y = y.cuda()
-        return y/255.
+        return y/M
     
 def save_display(x,path=None):
     grid = torchvision.utils.make_grid(x,nrow=10,padding=1)

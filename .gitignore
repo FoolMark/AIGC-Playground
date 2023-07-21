@@ -3,4 +3,5 @@ log/
 checkpoint/
 data/
 sample/
+*.png
 __pycache__/
