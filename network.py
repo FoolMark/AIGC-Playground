@@ -96,12 +96,17 @@ class GatedBlock(nn.Module):
 
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
+
+        self.label_embedding = nn.Embedding(10,2*h_dim)
     
     def forward(self,x):
-        v_in,h_in,skip = x[0],x[1],x[2]
-        
+        v_in,h_in,skip,label = x[0],x[1],x[2],x[3]
+
+        label_embedded = self.label_embedding(label).unsqueeze(2).unsqueeze(3)
+
         #vertical
         v_out,v_out_shift = self.v_conv(v_in)
+        v_out += label_embedded
         v_out1,v_out2 = torch.split(v_out,self.h_dim,dim=1)
         v_out = self.tanh(v_out1)*self.sigmoid(v_out2)
 
@@ -109,6 +114,7 @@ class GatedBlock(nn.Module):
         h_out = self.h_conv(h_in)
         v_out_shift = self.v2h(v_out_shift)
         h_out = h_out + v_out_shift
+        h_out += label_embedded
         h_out1,h_out2 = torch.split(h_out,self.h_dim,dim=1)
         h_out = self.tanh(h_out1)*self.sigmoid(h_out2)
 
@@ -117,11 +123,12 @@ class GatedBlock(nn.Module):
         h_out = self.h_fc(h_out)
         h_out = h_out + h_in
 
-        return [v_out,h_out,skip]
+        return [v_out,h_out,skip,label]
 
 class PixelCNN(nn.Module):
     def __init__(self,num_layer,h_dim,k_size,color_bit,*args, **kargs):
         super(PixelCNN, self).__init__(*args, **kargs)
+        self.label_embedding = nn.Embedding(10, h_dim)
         self.casual = CasualBlock(1,h_dim)
         self.layers = []
         for i in range(num_layer):
@@ -129,16 +136,17 @@ class PixelCNN(nn.Module):
         self.gateConv = nn.Sequential(*self.layers)
         self.outConv = nn.Sequential(nn.PReLU(),
             nn.Conv2d(h_dim,h_dim,1,1,0,bias=False),
-            nn.BatchNorm2d(h_dim),
             nn.PReLU())
         
         self.lastConv = nn.Conv2d(h_dim,2**color_bit,1,1,0)
 
-    def forward(self,x):
+    def forward(self,x,label):
         v,h = self.casual(x)
         blank = torch.zeros(x.shape,requires_grad=True).cuda()
-        x = [v,h,blank]
-        _,_,skip = self.gateConv(x)
+        label_embedded = self.label_embedding(label).unsqueeze(2).unsqueeze(3)
+        x = [v,h,blank,label]
+        _,_,skip,_ = self.gateConv(x)
+        skip += label_embedded
         x = self.outConv(skip)
         x = self.lastConv(x)
         return x

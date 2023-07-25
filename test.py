@@ -16,8 +16,9 @@ test_loader = testLoader(bs=batch_size)
 for data,label in test_loader:
     data = data.cuda()
     input = data
+    label = label.cuda()
     save_display(input,'sample/input.jpg')
-    output = net(input)
+    output = net(input,label)
     output = torch.argmax(output,dim=1) / (2**color_bit-1)
     output = output.unsqueeze(1)
     save_display(output,'sample/output.jpg')
@@ -25,10 +26,12 @@ for data,label in test_loader:
 
 #Generate via random sampling
 x = torch.zeros(data.shape).cuda()
+label = [i%10 for i in range(100)]
+label = torch.LongTensor(label).cuda()
 for i in range(28):
     print(f'{i+1}/28')
     for j in range(28):
-        output = net(x).detach()
+        output = net(x,label).detach()
         output = F.softmax(output)
         output = quantize(output,bit=color_bit,sample=True).unsqueeze(1)
         x[:,:,i,j] = output[:,:,i,j]

@@ -1,6 +1,7 @@
 from utils import *
 from config import *
 from network import PixelCNN
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,8 +33,10 @@ for epoch in range(n_epoch):
     for data,label in train_loader:
         iter += 1
         data = data.cuda()
+        label = label.cuda()
+
         input = data
-        output = net(input)
+        output = net(input,label)
 
         target = quantize(data,bit=color_bit).detach()
         target = target.squeeze(1).long()
@@ -55,9 +58,9 @@ for epoch in range(n_epoch):
     with torch.no_grad():
         for data,label in test_loader:
             data = data.cuda()
-
+            label = label.cuda()
             input = data
-            output = net(input)
+            output = net(input,label)
             target = quantize(data,bit=color_bit).detach()
             target = target.squeeze(1).long()
 
